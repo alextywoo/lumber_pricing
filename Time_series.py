@@ -40,8 +40,8 @@ data.dropna(inplace=True)
 # plt.show()
 
 # Split train and test
-train = data.iloc[:-int(len(data) * 0.1)]
-test = data.iloc[-int(len(data) * 0.1):]
+train = data.iloc[:-int(len(data) * 0.05)]
+test = data.iloc[-int(len(data) * 0.05):]
 
 def mape(a, b):
     mask = a != 0
@@ -52,7 +52,6 @@ def mape(a, b):
 
 # Preparing data for Prophet (requires a specific format)
 prophet_data_train = train[['Date', 'Market_Price', 'cap', 'floor']].rename(columns={'Date': 'ds', 'Market_Price': 'y'})
-
 
 param_space = dict(
     growth=['logistic'],
@@ -81,8 +80,10 @@ def objective_function(args_list):
         try:
             # Create Prophet model with given parameters
             prophet_model = Prophet(**params)
-            prophet_model.fit(prophet_data_train)
+            prophet_model.fit(prophet_data_train[['ds', 'y', 'cap', 'floor']])
             future = prophet_model.make_future_dataframe(periods=len(test), freq='W')
+            future['cap'] = cap
+            future['floor'] = floor
             forecasts_value = prophet_model.predict(future)
             forecasts_prophet = forecasts_value['yhat'][-len(test):].tolist()
             error = mape(test['Market_Price'], forecasts_prophet)
@@ -95,8 +96,8 @@ def objective_function(args_list):
 
         # print(params_evaluated, mse)
     return params_evaluated, results
-conf_Dict['initial_random'] = 10
-conf_Dict['num_iteration'] = 5
+conf_Dict['initial_random'] = 15
+conf_Dict['num_iteration'] = 50
 
 tuner = Tuner(param_space, objective_function, conf_Dict)
 results = tuner.minimize()
@@ -118,12 +119,14 @@ prophet_model = Prophet(
 )
 prophet_model.fit(prophet_data_train)
 future = prophet_model.make_future_dataframe(periods=len(test), freq='W')
-future['cap'] = cap
-future['floor'] = floor
+future['cap'] = cap  # Set the cap for the forecast period
+future['floor'] = floor  # Set the floor for the forecast period
+
+print(future)
+print(prophet_data_train)
 forecasts_value = prophet_model.predict(future)
 fig = prophet_model.plot(forecasts_value)
 fig.show()
-print(forecasts_value)
 forecasts_prophet = forecasts_value['yhat'][-len(test):].tolist()
 
 
@@ -192,62 +195,61 @@ forecasts_prophet = forecasts_value['yhat'][-len(test):].tolist()
 # ax2.tick_params(axis='both', labelsize=12)
 # plt.show()
 #
-# # Build AR model
-# selector = ar_select_order(train['Price_stationary'], 20)
-# model_autoreg = AutoReg(train['Price_stationary'], lags=selector.ar_lags).fit()
-#
-# transformed_forecasts = list(model_autoreg.forecast(steps=len(test)))
-# boxcox_forecasts = []
-# for idx in range(len(test)):
-#     if idx == 0:
-#         boxcox_forecast = transformed_forecasts[idx] + train['Price_boxcox'].iloc[-1]
-#     else:
-#         boxcox_forecast = transformed_forecasts[idx] + boxcox_forecasts[idx - 1]
-#
-#     boxcox_forecasts.append(boxcox_forecast)
-#
-# forecasts_autoreg = inv_boxcox(boxcox_forecasts, lam)
-#
-# # Build SARIMA model
-# model = ARIMA(train['Price_boxcox'], order=(8, 1, 8),
-#               seasonal_order=(1, 1, 1, 13)).fit()
-# boxcox_forecasts = model.forecast(len(test))
-# forecasts_SARIMA = inv_boxcox(boxcox_forecasts, lam)
-#
-#
-#
-# def plot_func(forecast1: list[float],
-#               forecast2: list[float],
-#               forecast3: list[float],
-#               title: str) -> None:
-#     """Function to plot the forecasts."""
-#     fig = go.Figure()
-#     fig.add_trace(go.Scatter(x=train['Date'], y=train['Market_Price'], name='Train'))
-#     fig.add_trace(go.Scatter(x=test['Date'], y=test['Market_Price'], name='Test'))
-#     fig.add_trace(go.Scatter(x=test['Date'], y=forecast1, name='Prophet'))
-#     fig.add_trace(go.Scatter(x=test['Date'], y=forecast2, name="SARIMA"))
-#     fig.add_trace(go.Scatter(x=test['Date'], y=forecast3, name='Holt Winters'))
-#     fig.update_layout(template="simple_white", font=dict(size=18), title_text=title,
-#                       width=1400, title_x=0.5, height=800, xaxis_title='Date',
-#                       yaxis_title='Lumber Market Price')
-#     return fig.show()
-#
-#
-# # Fit simple model and get forecasts
-# model_simple = SimpleExpSmoothing(train['Market_Price']).fit(optimized=True)
-# forecasts_simple = model_simple.forecast(len(test))
-#
-# # Fit Holt's model and get forecasts
-# model_holt = Holt(train['Market_Price'], damped_trend=True).fit(optimized=True)
-# forecasts_holt = model_holt.forecast(len(test))
-#
-# print(forecasts_holt)
-#
-# # Fit Holt Winters model and get forecasts
-# model_holt_winters = ExponentialSmoothing(train['Market_Price'], trend='add',
-#                                           seasonal='add', seasonal_periods=13) \
-#     .fit(optimized=True)
-# forecasts_holt_winters = model_holt_winters.forecast(len(test))
-#
-# # Plot the forecasts
-# plot_func(forecasts_prophet, forecasts_SARIMA, forecasts_holt_winters, "Holt-Winters Exponential Smoothing")
+# Build AR model
+selector = ar_select_order(train['Price_stationary'], 20)
+model_autoreg = AutoReg(train['Price_stationary'], lags=selector.ar_lags).fit()
+
+transformed_forecasts = list(model_autoreg.forecast(steps=len(test)))
+boxcox_forecasts = []
+for idx in range(len(test)):
+    if idx == 0:
+        boxcox_forecast = transformed_forecasts[idx] + train['Price_boxcox'].iloc[-1]
+    else:
+        boxcox_forecast = transformed_forecasts[idx] + boxcox_forecasts[idx - 1]
+
+    boxcox_forecasts.append(boxcox_forecast)
+
+forecasts_autoreg = inv_boxcox(boxcox_forecasts, lam)
+
+# Build SARIMA model
+model = ARIMA(train['Price_boxcox'], order=(8, 1, 8),
+              seasonal_order=(1, 1, 1, 13)).fit()
+boxcox_forecasts = model.forecast(len(test))
+forecasts_SARIMA = inv_boxcox(boxcox_forecasts, lam)
+
+
+
+def plot_func(forecast1: list[float],
+              forecast2: list[float],
+              forecast3: list[float],
+              title: str) -> None:
+    """Function to plot the forecasts."""
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=train['Date'], y=train['Market_Price'], name='Train'))
+    fig.add_trace(go.Scatter(x=test['Date'], y=test['Market_Price'], name='Test'))
+    fig.add_trace(go.Scatter(x=test['Date'], y=forecast1, name='Prophet'))
+    fig.add_trace(go.Scatter(x=test['Date'], y=forecast2, name="SARIMA"))
+    fig.add_trace(go.Scatter(x=test['Date'], y=forecast3, name='Holt Winters'))
+    fig.update_layout(template="simple_white", font=dict(size=18), title_text=title,
+                      width=1400, title_x=0.5, height=800, xaxis_title='Date',
+                      yaxis_title='Lumber Market Price')
+    return fig.show()
+
+
+# Fit simple model and get forecasts
+model_simple = SimpleExpSmoothing(train['Market_Price']).fit(optimized=True)
+forecasts_simple = model_simple.forecast(len(test))
+
+# Fit Holt's model and get forecasts
+model_holt = Holt(train['Market_Price'], damped_trend=True).fit(optimized=True)
+forecasts_holt = model_holt.forecast(len(test))
+
+
+# Fit Holt Winters model and get forecasts
+model_holt_winters = ExponentialSmoothing(train['Market_Price'], trend='add',
+                                          seasonal='add', seasonal_periods=13) \
+    .fit(optimized=True)
+forecasts_holt_winters = model_holt_winters.forecast(len(test))
+
+# Plot the forecasts
+plot_func(forecasts_prophet, forecasts_SARIMA, forecasts_holt_winters, "Holt-Winters Exponential Smoothing")
