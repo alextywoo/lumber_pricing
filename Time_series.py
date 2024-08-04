@@ -19,10 +19,11 @@ from mango import scheduler, Tuner
 # Read in the data
 data = pd.read_csv('Lumber_Data_Weekly.csv')
 data['Date'] = pd.to_datetime(data['Date'] + '-1', format='%Y-%W-%w')
-cap = 800
+cap = 700
 floor = 350
 data['cap'] = cap
 data['floor'] = floor
+
 
 
 # Make the target stationary
@@ -40,8 +41,8 @@ data.dropna(inplace=True)
 # plt.show()
 
 # Split train and test
-train = data.iloc[:-int(len(data) * 0.05)]
-test = data.iloc[-int(len(data) * 0.05):]
+train = data.iloc[:-int(len(data) * 0.1)]
+test = data.iloc[-int(len(data) * 0.1):]
 
 def mape(a, b):
     mask = a != 0
@@ -51,7 +52,9 @@ def mape(a, b):
 # Fit Prophet model
 
 # Preparing data for Prophet (requires a specific format)
-prophet_data_train = train[['Date', 'Market_Price', 'cap', 'floor']].rename(columns={'Date': 'ds', 'Market_Price': 'y'})
+prophet_data_train = train[['Date', 'mortgage_avg', 'Market_Price', 'cap', 'floor']].rename(columns={'Date': 'ds', 'Market_Price': 'y'})
+
+np.random.seed(42)
 
 param_space = dict(
     growth=['logistic'],
@@ -64,14 +67,14 @@ param_space = dict(
     seasonality_mode=['additive', 'multiplicative'],
     yearly_seasonality=[True, False],
     weekly_seasonality=[True, False],
-    daily_seasonality=[False]  # Often disabled unless very frequent data
+    daily_seasonality=[False],  # Often disabled unless very frequent data,
 )
 
 
 conf_Dict = dict()
 
 def objective_function(args_list):
-    global prophet_data_train, test
+    global prophet_data_train, test, data
 
     params_evaluated = []
     results = []
@@ -80,10 +83,14 @@ def objective_function(args_list):
         try:
             # Create Prophet model with given parameters
             prophet_model = Prophet(**params)
-            prophet_model.fit(prophet_data_train[['ds', 'y', 'cap', 'floor']])
+            prophet_model.add_regressor('mortgage_avg',standardize=False)
+            prophet_model.fit(prophet_data_train)
             future = prophet_model.make_future_dataframe(periods=len(test), freq='W')
+            mortgage_avg_df = data[['Date', 'mortgage_avg']].rename(columns={'Date': 'ds'})
+            future = future.merge(mortgage_avg_df, on='ds', how='left')
             future['cap'] = cap
             future['floor'] = floor
+            future['mortgage_avg'].fillna(method='ffill', inplace=True)
             forecasts_value = prophet_model.predict(future)
             forecasts_prophet = forecasts_value['yhat'][-len(test):].tolist()
             error = mape(test['Market_Price'], forecasts_prophet)
@@ -115,15 +122,17 @@ prophet_model = Prophet(
     seasonality_mode= results['best_params']['seasonality_mode'],       # Choose Seasonality mode
     yearly_seasonality=results['best_params']['yearly_seasonality'],       # Enable/disable yearly seasonality
     weekly_seasonality=results['best_params']['weekly_seasonality'],       # Enable/disable weekly seasonality
-    daily_seasonality=results['best_params']['daily_seasonality']        # Enable/disable daily seasonality
+    daily_seasonality=results['best_params']['daily_seasonality'],        # Enable/disable daily seasonality
 )
+
 prophet_model.fit(prophet_data_train)
 future = prophet_model.make_future_dataframe(periods=len(test), freq='W')
-future['cap'] = cap  # Set the cap for the forecast period
-future['floor'] = floor  # Set the floor for the forecast period
+mortgage_avg_df = data[['Date', 'mortgage_avg']].rename(columns={'Date': 'ds'})
+future = future.merge(mortgage_avg_df, on='ds', how='left')
+future['cap'] = cap
+future['floor'] = floor
+future['mortgage_avg'].fillna(method='ffill', inplace=True)
 
-print(future)
-print(prophet_data_train)
 forecasts_value = prophet_model.predict(future)
 fig = prophet_model.plot(forecasts_value)
 fig.show()
